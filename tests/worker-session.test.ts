@@ -2,15 +2,12 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
-import { createJiti } from "jiti";
-import { ControlledSession } from "./helpers/session.mjs";
+import { type TestContext, test } from "node:test";
+import type { LoadExtensionsResult } from "@earendil-works/pi-coding-agent";
+import { closeWorkerSession, resolveWorkerCwd, withoutSubagentExtensions } from "../src/worker-session";
+import { ControlledSession } from "./helpers/session";
 
-const { closeWorkerSession, resolveWorkerCwd, withoutSubagentExtensions } = await createJiti(import.meta.url).import(
-	"../src/worker-session.ts",
-);
-
-function directory(t) {
+function directory(t: TestContext) {
 	const path = mkdtempSync(join(tmpdir(), "pi-subagents-test-"));
 	t.after(() => rmSync(path, { recursive: true, force: true }));
 	return path;
@@ -45,15 +42,15 @@ test("session shutdown still disposes resources and settles credentials when an 
 	session.extensionRunner.emit = async () => {
 		throw failure;
 	};
-	const writes = Promise.withResolvers();
+	const writes = Promise.withResolvers<void>();
 	session.credentialWrites = writes.promise;
-	const disposed = Promise.withResolvers();
+	const disposed = Promise.withResolvers<void>();
 	session.dispose = () => {
 		session.disposed = true;
 		disposed.resolve();
 	};
 	let closed = false;
-	const closing = closeWorkerSession(session);
+	const closing = closeWorkerSession(session.asAgentSession());
 	const rejected = assert.rejects(closing, (error) => {
 		closed = true;
 		return error === failure;
@@ -69,7 +66,7 @@ test("session shutdown still disposes resources and settles credentials when an 
 });
 
 test("workers load every discovered extension except ones that provide subagent tools", () => {
-	const extension = (path, tools) => ({ path, tools: new Map(tools.map((name) => [name, {}])) });
+	const extension = (path: string, tools: string[]) => ({ path, tools: new Map(tools.map((name) => [name, {}])) });
 	const discovered = {
 		extensions: [
 			extension("formatter", ["format"]),
@@ -79,7 +76,7 @@ test("workers load every discovered extension except ones that provide subagent 
 		],
 		errors: [{ path: "broken", error: "Syntax error" }],
 	};
-	const loaded = withoutSubagentExtensions(discovered);
+	const loaded = withoutSubagentExtensions(discovered as unknown as LoadExtensionsResult);
 	assert.deepEqual(
 		loaded.extensions.map((ext) => ext.path),
 		["formatter", "no-tools"],

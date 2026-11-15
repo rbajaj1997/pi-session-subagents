@@ -185,7 +185,7 @@ Formatting and linting follow Pi's own Biome setup: tabs, a 120-character line w
 
 The package ships TypeScript source through `pi.extensions`. Pi loads it directly, so no compilation or bundling step is required. Pi-provided imports are peer dependencies, with pinned development copies for local typechecking. There are no additional runtime dependencies.
 
-`npm test` uses Node's built-in test runner and Jiti to load the TypeScript source. Tests exercise commands, the roster, worker lifecycle and steering, deadlines, report delivery, model selection, result pagination, transcript inspection, the widget, the inspector, and session cleanup. They use a controlled Pi session substitute and temporary directories, without model calls or credentials. Live provider discovery, trust configuration, and interactive TUI behavior still need checks in Pi.
+`npm test` uses Node's built-in test runner with tsx to run the TypeScript tests. The tests use normal imports, and `tsc --noEmit` checks both `src/` and `tests/`. Tests exercise commands, the roster, worker lifecycle and steering, deadlines, report delivery, model selection, result pagination, transcript inspection, the widget, the inspector, and session cleanup. They use a controlled Pi session substitute and temporary directories, without model calls or credentials. Live provider discovery, trust configuration, and interactive TUI behavior still need checks in Pi.
 
 ```text
 src/
@@ -201,7 +201,7 @@ src/
   ui/
     widget.ts               Worker list above the editor
     conversation-viewer.ts  Framed read-only inspector using Pi's own components
-tests/                      Behaviour tests, run with node --test through jiti
+tests/                      TypeScript behavior tests, run with node --test through tsx
 ```
 
 CI runs `npm run check`, `npm test`, and `npm pack --dry-run` on Node 22 and 24 for every push to `main` and every pull request.

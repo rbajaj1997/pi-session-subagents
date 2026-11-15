@@ -1,21 +1,51 @@
+import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type {
+	AgentSession,
+	PromptOptions,
+	SessionMessageEntry,
+	SessionShutdownEvent,
+} from "@earendil-works/pi-coding-agent";
+
+type PromptDisposition = Parameters<NonNullable<PromptOptions["preflightResult"]>>[0];
+
+interface ControlledRequest {
+	text: string;
+	options: PromptOptions;
+	disposition?: PromptDisposition;
+	finish(): void;
+	fail(error: unknown): void;
+	accept(disposition: PromptDisposition): void;
+}
+
 export class ControlledSession {
-	branch = [];
-	requests = [];
+	branch: Pick<SessionMessageEntry, "type" | "id" | "message">[] = [];
+	requests: ControlledRequest[] = [];
 	pendingMessageCount = 0;
-	thinkingLevel = "low";
-	state = {
+	thinkingLevel: ThinkingLevel = "low";
+	running = false;
+	state: {
+		messages: AgentMessage[];
+		pendingToolCalls: Set<string>;
+		streamingMessage: Pick<AssistantMessage, "role" | "content"> | undefined;
+	} = {
 		messages: [],
 		pendingToolCalls: new Set(),
 		streamingMessage: undefined,
 	};
 	enabledTools = ["read"];
 	callableTools = ["read", "tool_search"];
-	queuedMessages = [];
-	shutdownEvents = [];
+	queuedMessages: string[] = [];
+	shutdownEvents: SessionShutdownEvent[] = [];
 	disposed = false;
 	credentialWrites = Promise.resolve();
 	deferAcceptance = false;
-	onLateTurn = () => {};
+	onLateTurn: (queued: string[]) => void | Promise<void> = () => {};
+
+	// AgentSession has private members, so a structural fake needs this one cast.
+	asAgentSession(): AgentSession {
+		return this as unknown as AgentSession;
+	}
 
 	sessionManager = {
 		getLeafId: () => this.branch.at(-1)?.id ?? null,
@@ -24,7 +54,7 @@ export class ControlledSession {
 	};
 
 	extensionRunner = {
-		emit: async (event) => {
+		emit: async (event: SessionShutdownEvent) => {
 			this.shutdownEvents.push(event);
 		},
 	};
@@ -42,9 +72,9 @@ export class ControlledSession {
 		return this.callableTools;
 	}
 
-	prompt(text, options) {
-		const completion = Promise.withResolvers();
-		const request = {
+	prompt(text: string, options: PromptOptions) {
+		const completion = Promise.withResolvers<void>();
+		const request: ControlledRequest = {
 			text,
 			options,
 			finish: () => {
@@ -59,7 +89,7 @@ export class ControlledSession {
 					this.pendingMessageCount++;
 					this.queuedMessages.push(text);
 				}
-				options.preflightResult(disposition);
+				options.preflightResult?.(disposition);
 			},
 		};
 		this.requests.push(request);
@@ -67,14 +97,21 @@ export class ControlledSession {
 		return completion.promise;
 	}
 
-	assistant(text, overrides = {}) {
-		const message = {
+	assistant(text: string, overrides: Partial<AssistantMessage> = {}) {
+		const message: AssistantMessage = {
 			role: "assistant",
 			content: [{ type: "text", text }],
 			api: "anthropic-messages",
 			provider: "example",
 			model: "small",
-			usage: { input: 10, output: 5, cacheRead: 2, cacheWrite: 3 },
+			usage: {
+				input: 10,
+				output: 5,
+				cacheRead: 2,
+				cacheWrite: 3,
+				totalTokens: 20,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
 			stopReason: "stop",
 			timestamp: Date.now(),
 			...overrides,
@@ -87,7 +124,7 @@ export class ControlledSession {
 		this.state.messages.push(message);
 	}
 
-	async sendCustomMessage(_message, options) {
+	async sendCustomMessage(_message: unknown, options: { triggerTurn?: boolean }) {
 		if (options.triggerTurn) {
 			const queued = this.queuedMessages.splice(0);
 			this.pendingMessageCount = 0;

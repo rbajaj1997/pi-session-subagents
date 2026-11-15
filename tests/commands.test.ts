@@ -1,30 +1,40 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createJiti } from "jiti";
-
-const register = await createJiti(import.meta.url).import("../src/index.ts", { default: true });
+import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from "@earendil-works/pi-coding-agent";
+import register from "../src/index";
+import { TestEvents } from "./helpers/events";
 
 function setup() {
-	const commands = new Map();
-	const events = new Map();
-	const requests = [];
-	const notifications = [];
+	const commands = new Map<string, Pick<RegisteredCommand, "handler">>();
+	const events = new TestEvents();
+	const requests: string[] = [];
+	const notifications: { text: string; level?: string }[] = [];
 	let activeTools = ["read", "bash"];
-	register({
+	const pi = {
 		getActiveTools: () => activeTools,
 		setActiveTools: (names) => {
 			activeTools = names;
 		},
 		registerTool: () => {},
 		registerMessageRenderer: () => {},
-		registerCommand: (name, command) => commands.set(name, command),
-		on: (name, handler) => events.set(name, handler),
-		sendUserMessage: (text) => requests.push(text),
-	});
+		registerCommand: (name, command) => {
+			commands.set(name, command);
+		},
+		on: events.on,
+		sendUserMessage: (text) => {
+			assert.ok(typeof text === "string");
+			requests.push(text);
+		},
+	} satisfies Partial<ExtensionAPI>;
+	register(pi as unknown as ExtensionAPI);
 	const ctx = {
 		hasUI: false,
 		waitForIdle: async () => {},
-		ui: { notify: (text, level) => notifications.push({ text, level }) },
+		ui: {
+			notify: (text: string, level?: string) => {
+				notifications.push({ text, level });
+			},
+		},
 	};
 	return {
 		events,
@@ -32,7 +42,11 @@ function setup() {
 		requests,
 		notifications,
 		active: () => activeTools,
-		command: (args) => commands.get("subagents").handler(args, ctx),
+		command: (args: string) => {
+			const command = commands.get("subagents");
+			assert.ok(command);
+			return command.handler(args, ctx as ExtensionCommandContext);
+		},
 	};
 }
 
@@ -76,7 +90,7 @@ test("blank commands do not enable tools or send an empty model request", async 
 
 test("enabling waits for the parent's current turn before forwarding a new request", async () => {
 	const app = setup();
-	const idle = Promise.withResolvers();
+	const idle = Promise.withResolvers<void>();
 	app.ctx.waitForIdle = () => idle.promise;
 	const pending = app.command("Create a scout");
 	assert.deepEqual(app.active(), ["read", "bash"]);
@@ -90,8 +104,8 @@ test("enabling waits for the parent's current turn before forwarding a new reque
 test("turning subagents off preserves unrelated tools and waits for the parent to be idle", async () => {
 	const app = setup();
 	await app.command("on");
-	const idle = Promise.withResolvers();
-	const waiting = Promise.withResolvers();
+	const idle = Promise.withResolvers<void>();
+	const waiting = Promise.withResolvers<void>();
 	app.ctx.waitForIdle = () => {
 		waiting.resolve();
 		return idle.promise;
@@ -109,6 +123,6 @@ test("a new parent session turns worker tools off even if they were previously e
 	const app = setup();
 	await app.command("on");
 	assert.ok(app.active().includes("spawn_subagent"));
-	await app.events.get("session_start")({}, app.ctx);
+	await app.events.emit({ type: "session_start", reason: "startup" }, app.ctx as ExtensionCommandContext);
 	assert.deepEqual(app.active(), ["read", "bash"]);
 });

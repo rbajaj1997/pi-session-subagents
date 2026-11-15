@@ -1,19 +1,20 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import { createJiti } from "jiti";
-import { ControlledSession } from "./helpers/session.mjs";
+import { type TestContext, test } from "node:test";
+import type { ExtensionContext, ExtensionUIContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
+import type { Component, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
+import { openInspector } from "../src/ui/conversation-viewer";
+import { SubagentWidget } from "../src/ui/widget";
+import { Worker } from "../src/worker";
+import { ControlledSession } from "./helpers/session";
 
-const jiti = createJiti(import.meta.url);
-const { Worker } = await jiti.import("../src/worker.ts");
-const { SubagentWidget } = await jiti.import("../src/ui/widget.ts");
-const { openInspector } = await jiti.import("../src/ui/conversation-viewer.ts");
+const theme = { fg: (_color: unknown, text: string) => text, bold: (text: string) => text } as Theme;
+type WidgetComponent = Component & { handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined };
+type WidgetFactory = (tui: TUI, theme: Theme) => WidgetComponent;
 
-const theme = { fg: (_color, text) => text, bold: (text) => text };
-
-function worker(t, name, task) {
+function worker(t: TestContext, name: string, task?: string) {
 	const created = new Worker(
 		name,
-		new ControlledSession(),
+		new ControlledSession().asAgentSession(),
 		{ modelLabel: "example/small", cwd: "/workspace", requestedTools: [], warnings: [] },
 		() => {},
 	);
@@ -22,16 +23,20 @@ function worker(t, name, task) {
 	return created;
 }
 
-function mountWidget(t, workers, { mode = "tui", tuiMode = "fullscreen" } = {}) {
-	const selected = [];
-	const registrations = [];
-	let component;
+function mountWidget(t: TestContext, workers: Worker[], { mode = "tui", tuiMode = "fullscreen" } = {}) {
+	const selected: string[] = [];
+	const registrations: (WidgetFactory | undefined)[] = [];
+	let component: WidgetComponent | undefined;
+	const current = () => {
+		assert.ok(component);
+		return component;
+	};
 	const ctx = {
 		mode,
 		ui: {
-			setWidget: (_key, factory) => {
+			setWidget: (_key: string, factory?: WidgetFactory) => {
 				registrations.push(factory);
-				component = factory?.({ mode: tuiMode, requestRender: () => {} }, theme);
+				component = factory?.({ mode: tuiMode, requestRender: () => {} } as TUI, theme);
 			},
 		},
 	};
@@ -39,13 +44,24 @@ function mountWidget(t, workers, { mode = "tui", tuiMode = "fullscreen" } = {}) 
 		() => workers,
 		(name) => selected.push(name),
 	);
-	widget.attach(ctx);
+	widget.attach(ctx as unknown as ExtensionContext);
 	t.after(() => widget.dispose());
-	const click = (y) => {
-		component.handleMouse({ button: "left", type: "press", y });
-		component.handleMouse({ button: "left", type: "click", y });
+	const click = (y: number) => {
+		const position = {
+			x: 0,
+			y,
+			screenX: 0,
+			screenY: y,
+			width: 80,
+			height: 24,
+			shift: false,
+			alt: false,
+			ctrl: false,
+		};
+		current().handleMouse({ button: "left", type: "press", ...position });
+		current().handleMouse({ button: "left", type: "click", ...position });
 	};
-	return { widget, selected, registrations, click, lines: () => component.render(80) };
+	return { widget, selected, registrations, click, lines: () => current().render(80) };
 }
 
 test("clicking a worker's row in the widget selects that worker, and the header selects nothing", (t) => {
@@ -72,7 +88,7 @@ test("a long list ends with a count of hidden workers that selects nothing", (t)
 	const view = mountWidget(t, workers);
 	const lines = view.lines();
 	assert.equal(lines.length, 12);
-	assert.match(lines.at(-1), /\+2 more/);
+	assert.match(lines[lines.length - 1], /\+2 more/);
 	view.click(lines.length - 1);
 	assert.deepEqual(view.selected, []);
 });
@@ -86,38 +102,57 @@ test("the widget is removed when the last worker goes, and never shown outside t
 	assert.deepEqual(mountWidget(t, [worker(t, "other")], { mode: "rpc" }).registrations, []);
 });
 
-function inspectorContext({ mode = "tui", choice } = {}) {
-	const notices = [];
-	const overlays = [];
+function inspectorContext({ mode = "tui", choice }: { mode?: ExtensionContext["mode"]; choice?: string } = {}) {
+	const notices: { text: string; level?: string }[] = [];
+	const overlays: {
+		options: Parameters<ExtensionUIContext["custom"]>[1];
+		frame: string[];
+		close(): void;
+		closed(): boolean;
+	}[] = [];
 	const ctx = {
 		mode,
 		hasUI: true,
 		ui: {
-			notify: (text, level) => notices.push({ text, level }),
-			select: async (_title, options) => options.find((option) => option.startsWith(choice ?? "\0")),
-			custom: async (factory, options) => {
+			notify: (text: string, level?: string) => {
+				notices.push({ text, level });
+			},
+			select: async (_title: string, options: string[]) =>
+				options.find((option) => option.startsWith(choice ?? "\0")),
+			custom: async (
+				factory: Parameters<ExtensionUIContext["custom"]>[0],
+				options: Parameters<ExtensionUIContext["custom"]>[1],
+			) => {
 				let closed = false;
 				const tui = { terminal: { rows: 24 }, requestRender: () => {} };
-				const viewer = factory(tui, theme, { matches: () => false }, () => {
-					closed = true;
-				});
+				const viewer = await factory(
+					tui as TUI,
+					theme,
+					{ matches: () => false } as unknown as KeybindingsManager,
+					() => {
+						closed = true;
+					},
+				);
 				overlays.push({
 					options,
 					frame: viewer.render(80),
-					close: () => viewer.handleInput("\x1b"),
+					close: () => {
+						assert.ok(viewer.handleInput);
+						viewer.handleInput("\x1b");
+					},
 					closed: () => closed,
 				});
 			},
 		},
 	};
-	return { ctx, notices, overlays };
+	return { ctx: ctx as unknown as ExtensionContext, notices, overlays };
 }
 
 test("the inspector opens a framed overlay for the named worker and closes on Escape", async (t) => {
 	const { ctx, overlays } = inspectorContext();
 	await openInspector(ctx, [worker(t, "scout", "Map the repository"), worker(t, "reviewer")], "scout");
 	assert.equal(overlays.length, 1);
-	assert.equal(overlays[0].options.overlay, true);
+	assert.equal(overlays[0].options?.overlay, true);
 	assert.match(overlays[0].frame[0], /^╭─+╮$/);
 	assert.match(overlays[0].frame[1], /scout/);
 	assert.match(overlays[0].frame[2], /Map the repository/);
