@@ -1,6 +1,6 @@
 {
 	"name": "pi-session-subagents",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Session-scoped subagents for Pi with idle workers, steering, and native transcript inspection.",
 	"type": "module",
 	"license": "MIT",

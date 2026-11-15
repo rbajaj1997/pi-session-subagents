@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/rbajaj1997/pi-session-subagents/compare/v0.1.0...v0.1.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* require Node.js 24 ([#2](https://github.com/rbajaj1997/pi-session-subagents/issues/2)) ([b2d8749](https://github.com/rbajaj1997/pi-session-subagents/commit/b2d8749eeadafac621834c0fc18b1ce05fca744a))
+
 ## [0.1.0] - 2026-11-15
 
 Initial release.
