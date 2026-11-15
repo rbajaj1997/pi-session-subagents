@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import { createJiti } from "jiti";
-import { ControlledSession } from "./helpers/session.mjs";
+import { type TestContext, test } from "node:test";
+import { buildReport, type SubagentReport } from "../src/report";
+import { Worker } from "../src/worker";
+import { ControlledSession } from "./helpers/session";
 
-const jiti = createJiti(import.meta.url);
-const { Worker } = await jiti.import("../src/worker.ts");
-const { buildReport } = await jiti.import("../src/report.ts");
-
-function setup(t, session = new ControlledSession()) {
-	const reports = [];
+function setup(t: TestContext, session = new ControlledSession()) {
+	const reports: SubagentReport[] = [];
 	const worker = new Worker(
 		"scout",
-		session,
+		session.asAgentSession(),
 		{
 			modelLabel: "example/small",
 			cwd: "/workspace",
@@ -47,7 +44,7 @@ test("a task stays running until its response finishes, then reports its result 
 	assert.equal(worker.status, "running");
 	assert.equal(worker.task, "Map the repository");
 	assert.equal(session.requests[0].text, "Map the repository");
-	assert.deepEqual(reports, []);
+	assert.equal(reports.length, 0);
 
 	session.assistant("The entry point is src/index.ts.");
 	session.requests[0].finish();
@@ -118,7 +115,7 @@ test("capabilities distinguish enabled, callable, and unavailable requested tool
 for (const [stopReason, errorMessage] of [
 	["error", "Provider unavailable"],
 	["aborted", "Request cancelled"],
-]) {
+] as const) {
 	test(`a model ${stopReason} produces a failed completion report`, async (t) => {
 		const { worker, session, reports } = setup(t);
 		worker.start("Inspect files");
@@ -165,7 +162,7 @@ test("steering that arrives at the end of a turn is processed before reporting",
 	session.requests[0].finish();
 	await Promise.resolve();
 	assert.equal(worker.status, "running");
-	assert.deepEqual(reports, []);
+	assert.equal(reports.length, 0);
 
 	session.onLateTurn = (queued) => {
 		assert.deepEqual(queued, ["Also inspect tests"]);
@@ -190,7 +187,7 @@ test("an input handler can consume steering without starting another task", asyn
 	session.requests[1].finish();
 	assert.equal(await steering, "handled");
 	assert.equal(worker.runId, runId);
-	assert.deepEqual(reports, []);
+	assert.equal(reports.length, 0);
 	session.assistant("Finished original assignment");
 	session.requests[0].finish();
 	await worker.settled();
@@ -218,7 +215,9 @@ test("a deadline fails the task, drops unread steering, and permits a follow-up"
 
 	worker.start("Continue after timeout");
 	session.assistant("Recovered result");
-	session.requests.at(-1).finish();
+	const request = session.requests.at(-1);
+	assert.ok(request);
+	request.finish();
 	await worker.settled();
 	assert.equal(worker.status, "done");
 	assert.equal(worker.error, "");
@@ -228,7 +227,7 @@ test("a deadline fails the task, drops unread steering, and permits a follow-up"
 
 test("stopping suppresses completion reports and waits for credential writes before resolving", async (t) => {
 	const { worker, session, reports } = setup(t);
-	const writes = Promise.withResolvers();
+	const writes = Promise.withResolvers<void>();
 	session.credentialWrites = writes.promise;
 	worker.start("Long-running assignment");
 	const closing = worker.close();

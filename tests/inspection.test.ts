@@ -1,38 +1,50 @@
 import assert from "node:assert/strict";
 import { realpathSync } from "node:fs";
-import { test } from "node:test";
-import { createJiti } from "jiti";
-import { ControlledSession } from "./helpers/session.mjs";
+import { type TestContext, test } from "node:test";
+import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import { Roster } from "../src/roster";
+import { subagentTools } from "../src/tools";
+import { ControlledSession } from "./helpers/session";
 
-const jiti = createJiti(import.meta.url);
-const { Roster } = await jiti.import("../src/roster.ts");
-const { subagentTools } = await jiti.import("../src/tools.ts");
-
-async function setup(t) {
+async function setup(t: TestContext) {
 	const session = new ControlledSession();
-	const pi = { getActiveTools: () => ["read", "grep"], getThinkingLevel: () => "low", sendMessage: () => {} };
-	const roster = new Roster(pi, async () => ({
-		session,
+	const pi = {
+		getActiveTools: () => ["read", "grep"],
+		getThinkingLevel: () => "low",
+		sendMessage: () => {},
+	} satisfies Partial<ExtensionAPI>;
+	const roster = new Roster(pi as unknown as ExtensionAPI, async () => ({
+		session: session.asAgentSession(),
 		modelLabel: "example/small",
 		warnings: ["Untrusted project resources skipped"],
 	}));
 	t.after(() => roster.dispose());
-	const ctx = { cwd: process.cwd(), mode: "print", hasUI: false, isIdle: () => true };
+	const ctx = { cwd: process.cwd(), mode: "print", hasUI: false, isIdle: () => true } as ExtensionContext;
 	roster.attach(ctx);
 	const worker = await roster.spawn({ name: "scout" }, ctx);
 	const tools = subagentTools(roster);
 	const inspectTool = tools.find((tool) => tool.name === "inspect_subagent");
-	const inspect = async (options = {}) => {
-		const result = await inspectTool.execute("inspection", {
-			name: "scout",
-			...options,
-		});
-		return { text: result.content[0].text, details: result.details };
+	assert.ok(inspectTool);
+	const inspect = async (
+		options: { tailLines?: number; includeResult?: boolean; runId?: number; resultOffset?: number } = {},
+	) => {
+		const result = await inspectTool.execute(
+			"inspection",
+			{ name: "scout", ...options },
+			undefined,
+			undefined,
+			ctx as ExtensionToolContext,
+		);
+		const content = result.content[0];
+		assert.equal(content.type, "text");
+		return { text: content.text, details: result.details };
 	};
-	const finish = async (outcome) => {
+	const finish = async (outcome: string) => {
 		worker.start("Map the repository");
 		session.assistant(outcome);
-		session.requests.at(-1).finish();
+		const request = session.requests.at(-1);
+		assert.ok(request);
+		request.finish();
 		await worker.settled();
 	};
 	return { worker, session, inspect, finish };
@@ -127,6 +139,7 @@ test("transcript tails include user text and tool work but exclude thinking", as
 		id: "user-1",
 		message: {
 			role: "user",
+			timestamp: Date.now(),
 			content: [{ type: "text", text: "Read the README" }],
 		},
 	});

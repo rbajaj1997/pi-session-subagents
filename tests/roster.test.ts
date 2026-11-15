@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { realpathSync } from "node:fs";
-import { test } from "node:test";
-import { createJiti } from "jiti";
-import { ControlledSession } from "./helpers/session.mjs";
-
-const { Roster } = await createJiti(import.meta.url).import("../src/roster.ts");
+import { type TestContext, test } from "node:test";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { SubagentReport } from "../src/report";
+import { Roster, type SpawnOptions } from "../src/roster";
+import type { WorkerSessionOptions } from "../src/worker-session";
+import { ControlledSession } from "./helpers/session";
 
 const SUBAGENT_TOOLS = [
 	"spawn_subagent",
@@ -15,24 +16,26 @@ const SUBAGENT_TOOLS = [
 	"stop_subagent",
 ];
 
-function setup(t, { parentTools = ["read", "bash", ...SUBAGENT_TOOLS], idle = true } = {}) {
-	const created = [];
-	const sent = [];
+function setup(t: TestContext, { parentTools = ["read", "bash", ...SUBAGENT_TOOLS], idle = true } = {}) {
+	const created: { options: WorkerSessionOptions; session: ControlledSession }[] = [];
+	const sent: { message: { content: string; details?: SubagentReport }; options: unknown }[] = [];
 	const pi = {
 		getActiveTools: () => parentTools,
 		getThinkingLevel: () => "medium",
-		sendMessage: (message, options) => sent.push({ message, options }),
-	};
-	const createSession = async (_ctx, options) => {
+		sendMessage: (message, options) => {
+			sent.push({ message: message as { content: string; details?: SubagentReport }, options });
+		},
+	} satisfies Partial<ExtensionAPI>;
+	const createSession = async (_ctx: ExtensionContext, options: WorkerSessionOptions) => {
 		const session = new ControlledSession();
 		created.push({ options, session });
-		return { session, modelLabel: "example/small", warnings: [] };
+		return { session: session.asAgentSession(), modelLabel: "example/small", warnings: [] };
 	};
-	const roster = new Roster(pi, createSession);
-	const ctx = { cwd: process.cwd(), mode: "print", hasUI: false, isIdle: () => idle };
+	const roster = new Roster(pi as ExtensionAPI, createSession);
+	const ctx = { cwd: process.cwd(), mode: "print", hasUI: false, isIdle: () => idle } as ExtensionContext;
 	roster.attach(ctx);
 	t.after(() => roster.dispose());
-	const spawn = (options = {}, signal) => roster.spawn(options, ctx, signal);
+	const spawn = (options: SpawnOptions = {}, signal?: AbortSignal) => roster.spawn(options, ctx, signal);
 	return { roster, created, sent, spawn };
 }
 
@@ -119,7 +122,7 @@ test("a finished run delivers one report to the parent", async (t) => {
 test("waiting returns when the workers finish and reports progress while they run", async (t) => {
 	const { roster, created, spawn } = setup(t);
 	await spawn({ name: "scout", task: "Map the repository" });
-	const updates = [];
+	const updates: string[][] = [];
 	const waiting = roster.waitFor(["scout"], undefined, undefined, (update) => updates.push(update.details.waiting));
 	created[0].session.requests[0].finish();
 	assert.deepEqual(await waiting, []);

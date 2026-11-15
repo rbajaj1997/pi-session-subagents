@@ -1,20 +1,27 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createJiti } from "jiti";
+import { resolveModel, type WorkerModel } from "../src/model-resolver";
 
-const { resolveModel } = await createJiti(import.meta.url).import("../src/model-resolver.ts");
-
-const small = {
+const small: WorkerModel = {
+	api: "anthropic-messages",
+	baseUrl: "https://models.example",
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 200_000,
+	maxTokens: 8_000,
 	provider: "anthropic",
 	id: "claude-haiku-4-5",
 	name: "Claude Haiku 4.5",
 };
-const large = {
+const large: WorkerModel = {
+	...small,
 	provider: "anthropic",
 	id: "claude-opus-4-5",
 	name: "Claude Opus 4.5",
 };
-const otherProvider = {
+const otherProvider: WorkerModel = {
+	...small,
 	provider: "bedrock",
 	id: "claude-haiku-4-5",
 	name: "Claude Haiku 4.5",
@@ -41,18 +48,20 @@ test("fuzzy queries accept display names and ignore punctuation and case", () =>
 });
 
 test("exact matches win over broader matches regardless of registry order", () => {
-	const exact = { provider: "example", id: "haiku", name: "Small model" };
+	const exact = { ...small, provider: "example", id: "haiku", name: "Small model" };
 	assert.equal(resolveModel("haiku", [small, exact], large), exact);
 	assert.equal(resolveModel("haiku", [exact, small], large), exact);
 });
 
 test("a prefix match wins over a substring match", () => {
 	const substring = {
+		...small,
 		provider: "example",
 		id: "super-haiku",
 		name: "Small model",
 	};
 	const prefix = {
+		...small,
 		provider: "example",
 		id: "haiku-latest",
 		name: "New small model",

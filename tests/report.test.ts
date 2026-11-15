@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createJiti } from "jiti";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { ReportOutbox, registerReportDelivery, type SubagentReport } from "../src/report";
+import { TestEvents } from "./helpers/events";
 
-const { ReportOutbox, registerReportDelivery } = await createJiti(import.meta.url).import("../src/report.ts");
+interface SentReport {
+	message: { customType: string; content: string; display: boolean; details: SubagentReport };
+	options: Parameters<ExtensionAPI["sendMessage"]>[1];
+}
 
-function report(overrides = {}) {
+function report(overrides: Partial<SubagentReport> = {}): SubagentReport {
 	return {
 		agent: "scout",
 		runId: 7,
@@ -22,16 +27,24 @@ function report(overrides = {}) {
 }
 
 function setup() {
-	const messages = [];
-	const notifications = [];
-	const outbox = new ReportOutbox({
-		sendMessage: (message, options) => messages.push({ message, options }),
-	});
-	const context = (idle) => ({
-		isIdle: () => idle,
-		hasUI: true,
-		ui: { notify: (text, level) => notifications.push({ text, level }) },
-	});
+	const messages: SentReport[] = [];
+	const notifications: { text: string; level?: string }[] = [];
+	const pi = {
+		sendMessage: (message, options) => {
+			messages.push({ message: message as SentReport["message"], options });
+		},
+	} satisfies Partial<ExtensionAPI>;
+	const outbox = new ReportOutbox(pi as ExtensionAPI);
+	const context = (idle: boolean) =>
+		({
+			isIdle: () => idle,
+			hasUI: true,
+			ui: {
+				notify: (text: string, level?: string) => {
+					notifications.push({ text, level });
+				},
+			},
+		}) as ExtensionContext;
 	return { outbox, messages, notifications, context };
 }
 
@@ -79,7 +92,7 @@ test("failure reports retain partial output and expose the error to the parent",
 test("long reports preserve newlines and Unicode, advertise continuation, and retain full output for the card", () => {
 	const { outbox, messages } = setup();
 	const outcome = `${"a".repeat(11_998)}\n🚀\nRest of the result`;
-	outbox.deliver(report({ outcome }));
+	outbox.deliver(report({ outcome }), undefined);
 	const payload = JSON.parse(messages[0].message.content);
 	assert.equal(payload.result, `${"a".repeat(11_998)}\n`);
 	assert.equal(payload.nextResultOffset, 11_999);
@@ -97,6 +110,7 @@ test("model-visible task and error text are bounded without losing the full card
 			error: "e".repeat(2_001),
 			status: "error",
 		}),
+		undefined,
 	);
 	const payload = JSON.parse(messages[0].message.content);
 	assert.ok(payload.task.length <= 1_000);
@@ -132,7 +146,7 @@ test("Escape replays only undelivered reports even when the worker name is reuse
 test("reports sent while idle or without a context are not replayed by Escape", () => {
 	const { outbox, messages, context } = setup();
 	outbox.deliver(report({ runId: 7 }), context(true));
-	outbox.deliver(report({ runId: 8 }));
+	outbox.deliver(report({ runId: 8 }), undefined);
 	outbox.resendClearedByEscape();
 	assert.equal(messages.length, 2);
 });
@@ -150,18 +164,35 @@ test("clearing the outbox discards pending replays without affecting future deli
 });
 
 function deliverySetup() {
-	const handlers = new Map();
-	const messages = [];
+	const events = new TestEvents();
+	const messages: SentReport[] = [];
 	const pi = {
-		sendMessage: (message, options) => messages.push({ message, options }),
+		sendMessage: (message, options) => {
+			messages.push({ message: message as SentReport["message"], options });
+		},
 		registerMessageRenderer: () => {},
-		on: (event, handler) => handlers.set(event, handler),
-	};
-	const outbox = new ReportOutbox(pi);
-	registerReportDelivery(pi, outbox);
-	const busy = { isIdle: () => false, hasUI: false };
-	const reportArrives = (sent) => handlers.get("message_end")({ message: { role: "custom", ...sent.message } });
-	const settle = (aborted, mode) => handlers.get("agent_settled")({ aborted }, { mode });
+		on: events.on,
+	} satisfies Partial<ExtensionAPI>;
+	const api = pi as unknown as ExtensionAPI;
+	const outbox = new ReportOutbox(api);
+	registerReportDelivery(api, outbox);
+	const busy = { isIdle: () => false, hasUI: false } as ExtensionContext;
+	const reportArrives = (sent: SentReport) =>
+		events.emit(
+			{
+				type: "message_end",
+				message: { role: "custom", timestamp: Date.now(), ...sent.message },
+			},
+			busy,
+		);
+	const settle = (aborted: boolean, mode: ExtensionContext["mode"]) =>
+		events.emit(
+			{
+				type: "agent_settled",
+				aborted,
+			},
+			{ ...busy, mode },
+		);
 	return { outbox, messages, busy, reportArrives, settle };
 }
 
