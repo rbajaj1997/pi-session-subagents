@@ -20,7 +20,7 @@ This is conversational reuse, not a background job service. Workers do not survi
 ## Requirements
 
 - Pi 1.5.2 is the SDK and TUI compatibility target. Older versions are not supported; other versions have not been validated.
-- Node.js 22.19.0 or newer.
+- Node.js 24 or newer.
 - Model credentials and configuration available to Pi.
 
 ## Install
@@ -204,7 +204,7 @@ src/
 tests/                      TypeScript behavior tests, run with node --test through tsx
 ```
 
-CI runs `npm run check`, `npm test`, and `npm pack --dry-run` on Node 22 and 24 for every push to `main` and every pull request.
+CI runs `npm run check`, `npm test`, and `npm pack --dry-run` on Node 24 for every push to `main` and every pull request.
 
 ## Releasing
 
