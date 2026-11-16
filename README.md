@@ -138,6 +138,7 @@ The main widget and the inspector need the interactive TUI. In RPC mode, use `li
 - Mouse-wheel scrolling and native click controls work in fullscreen mode.
 - `t` or the configured `app.tools.expand` shortcut expands or collapses tool cards.
 - The configured `app.thinking.toggle` shortcut changes thinking visibility inside the inspector only.
+- In fullscreen mode, left-click outside the inspector to close it without activating the main session. Clicks anywhere inside its frame keep it open. Scrolling and dragging do not dismiss it. Outside drags are consumed rather than passed to the main session and can clear its existing text selection.
 - Escape or `q` closes the inspector without stopping the worker.
 
 ## Reviewing past work
