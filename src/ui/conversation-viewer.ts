@@ -17,6 +17,7 @@ import {
 	type Component,
 	Container,
 	matchesKey,
+	type OverlayHandle,
 	Text,
 	TruncatedText,
 	type TUI,
@@ -26,6 +27,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { clip, formatDuration, formatTokens, shortModelLabel } from "../text";
 import type { Worker } from "../worker";
+import { dismissOnOutsideClick } from "./outside-click";
 
 type ToolView = { component: ToolExecutionComponent; result?: unknown; durationMs?: number };
 
@@ -57,9 +59,17 @@ export async function openInspector(ctx: ExtensionContext, workers: Worker[], na
 		if (!worker) return;
 	}
 	const selected = worker;
+	let viewer: ConversationViewer;
 	await ctx.ui.custom<void>(
-		(tui, theme, keybindings, done) => new ConversationViewer(tui, selected, theme, keybindings, () => done()),
-		{ overlay: true, overlayOptions: { anchor: "center", width: "90%", margin: 1 } },
+		(tui, theme, keybindings, done) => {
+			viewer = new ConversationViewer(tui, selected, theme, keybindings, () => done());
+			return viewer;
+		},
+		{
+			overlay: true,
+			overlayOptions: { anchor: "center", width: "90%", margin: 1 },
+			onHandle: (handle) => viewer.attachOverlay(handle),
+		},
 	);
 }
 
@@ -79,6 +89,7 @@ class ConversationViewer implements Component {
 	private expanded = false;
 	private hideThinking: boolean;
 	private disposed = false;
+	private removeOutsideClick: (() => void) | undefined;
 
 	constructor(
 		private readonly tui: TUI,
@@ -123,6 +134,11 @@ class ConversationViewer implements Component {
 			}
 			this.tui.requestRender();
 		});
+	}
+
+	attachOverlay(handle: OverlayHandle): void {
+		if (this.disposed || this.removeOutsideClick) return;
+		this.removeOutsideClick = dismissOnOutsideClick(this.tui, handle, this.done);
 	}
 
 	handleInput(data: string): void {
@@ -246,6 +262,7 @@ class ConversationViewer implements Component {
 	dispose(): void {
 		if (this.disposed) return;
 		this.disposed = true;
+		this.removeOutsideClick?.();
 		this.unsubscribe();
 		this.history.clear();
 		this.rows.clear();
