@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/rbajaj1997/pi-session-subagents/compare/v0.1.1...v0.2.0) (2026-11-16)
+
+
+### Features
+
+* dismiss subagent inspector on outside click ([#4](https://github.com/rbajaj1997/pi-session-subagents/issues/4)) ([c917e49](https://github.com/rbajaj1997/pi-session-subagents/commit/c917e49180cd190ead3f0e7b39fa37e3f7f8a6cc))
+
 ## [0.1.1](https://github.com/rbajaj1997/pi-session-subagents/compare/v0.1.0...v0.1.1) (2026-11-15)
 
 
